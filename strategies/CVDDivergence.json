@@ -1,0 +1,31 @@
+{
+  "strategy_name": "CVDDivergence",
+  "params": {
+    "roi": {},
+    "stoploss": {
+      "stoploss": -0.05
+    },
+    "trailing": {
+      "trailing_stop": false,
+      "trailing_stop_positive": null,
+      "trailing_stop_positive_offset": 0.0,
+      "trailing_only_offset_is_reached": false
+    },
+    "max_open_trades": {
+      "max_open_trades": 2
+    },
+    "buy": {
+      "cvd_ma_window": 36,
+      "divergence_threshold": 1.826,
+      "max_trades": 1,
+      "pivot_window": 15
+    },
+    "sell": {
+      "atr_multiplier": 2.0,
+      "atr_period": 14
+    },
+    "protection": {}
+  },
+  "ft_stratparam_v": 1,
+  "export_time": "2024-09-29 17:59:23.942624+00:00"
+}

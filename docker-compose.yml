@@ -1,0 +1,17 @@
+version: '3'
+services:
+  freqtrade:
+    build:
+      context: .
+    restart: unless-stopped
+    container_name: freqtrade
+    volumes:
+      - ".:/freqtrade:rw"
+    ports:
+      - "8080:8080"
+    command: /bin/bash /freqtrade/start.sh
+    env_file:
+      - .env
+    environment:
+      - EXCHANGE=${EXCHANGE:-binance}
+    user: "${UID:-1000}:${GID:-1000}"
