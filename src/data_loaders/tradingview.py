@@ -1,8 +1,9 @@
 from tvDatafeed import TvDatafeed, Interval
 from os import getenv
 from dotenv import load_dotenv
+from constants import PROJECT_ROOT
 
-load_dotenv(".env")
+load_dotenv(PROJECT_ROOT / ".env")
 
 TV = TvDatafeed(
     username=getenv("TV_USERNAME"),

@@ -1,6 +1,6 @@
 # Quantitative Analysis
 
-This repository contains notebooks and scripts for quantitative analysis and strategy creation using Freqtrade, a powerful cryptocurrency trading bot.
+This repository scripts for quantitative analysis and strategy creation using Freqtrade, a powerful cryptocurrency trading bot.
 
 ## Table of Contents
 
