@@ -9,7 +9,8 @@ import numpy as np
 import talib.abstract as ta
 from datetime import datetime
 from freqtrade.persistence import Trade
-from typing import Optional
+from typing import Optional, Tuple
+from scipy import stats
 
 
 class CVDDivergence(IStrategy):
@@ -61,12 +62,6 @@ class CVDDivergence(IStrategy):
 
     poc_histogram_bins = IntParameter(10, 300, default=50, space="buy", optimize=True)
 
-    # Add new hyperparameters for order splitting
-    order_split_count = IntParameter(1, 20, default=10, space="buy", optimize=True)
-    order_split_factor = DecimalParameter(
-        0.5, 1.5, default=1.0, space="buy", optimize=True
-    )
-
     # Add a parameter for the number of scale-out steps
     scale_out_count = IntParameter(1, 5, default=3, space="sell", optimize=True)
 
@@ -74,14 +69,12 @@ class CVDDivergence(IStrategy):
     rsi_overbought = IntParameter(65, 85, default=70, space="buy", optimize=True)
     rsi_oversold = IntParameter(15, 35, default=30, space="buy", optimize=True)
 
-    divergence_window = IntParameter(2, 10, default=2, space="buy", optimize=True)
-    sma_window = IntParameter(2, 10, default=3, space="buy", optimize=True)
-
-    def __init__(self, config: dict) -> None:
-        super().__init__(config)
-        self.max_trades = IntParameter(
-            1, 20, default=self.order_split_count.value, space="buy", optimize=True
-        )
+    # Add new hyperparameters
+    divergence_lookback = IntParameter(10, 100, default=50, space="buy", optimize=True)
+    divergence_threshold = DecimalParameter(
+        1.5, 3.0, default=2.0, space="buy", optimize=True
+    )
+    roc_period = IntParameter(1, 20, default=5, space="buy", optimize=True)
 
     def _calculate_vwap_and_bands(self, group: DataFrame) -> DataFrame:
         typical_price = (group["high"] + group["low"] + group["close"]) / 3
@@ -131,6 +124,7 @@ class CVDDivergence(IStrategy):
         - VWAP and VWAP bands
         - ATR for dynamic stop loss
         - Point of Control (POC) from volume profile
+        - Divergences
         """
         dataframe["date"] = pd.to_datetime(dataframe["date"])
         dataframe["day"] = dataframe["date"].dt.date
@@ -145,89 +139,76 @@ class CVDDivergence(IStrategy):
 
         return dataframe
 
-    def detect_bullish_divergence(self, df: DataFrame) -> Series:
+    def detect_divergences(self, df: DataFrame) -> Tuple[Series, Series]:
         """
-        Detect bullish divergence between price and CVD.
+        Detect both bullish and bearish divergences using a quantitative approach.
         """
+        lookback = self.divergence_lookback.value
+        threshold = self.divergence_threshold.value
+        roc_period = self.roc_period.value
+
+        # Calculate rate of change
+        df["price_roc"] = df["close"].pct_change(roc_period)
+        df["cvd_roc"] = df["cvd"].pct_change(roc_period)
+
         bullish_div = np.zeros(len(df), dtype=bool)
-        df["low_sma"] = df["low"].rolling(window=self.sma_window.value).mean()
-        df["cvd_sma"] = df["cvd"].rolling(window=self.sma_window.value).mean()
-
-        window = self.divergence_window.value
-
-        for i in range(window, len(df)):
-            # Identify the most recent low in smoothed price
-            recent_price_low = df["low_sma"].iloc[i - window : i].min()
-            recent_price_low_idx = df["low_sma"].iloc[i - window : i].idxmin()
-
-            # Identify the most recent low in smoothed CVD
-            cvd_window = df["cvd_sma"].iloc[i - window : i]
-            if cvd_window.isna().all():
-                continue  # Skip if all values are NaN
-
-            recent_cvd_low = cvd_window.min()
-            recent_cvd_low_idx = cvd_window.idxmin()
-
-            # Check for higher low in price and lower low in CVD
-            if (df["low_sma"].iloc[i] > recent_price_low) and (
-                df["cvd_sma"].iloc[i] < recent_cvd_low
-            ):
-                if abs(recent_price_low_idx - recent_cvd_low_idx) <= window:
-                    if df["rsi"].iloc[i] < self.rsi_oversold.value:
-                        bullish_div[i] = True
-
-        return Series(bullish_div, index=df.index)
-
-    def detect_bearish_divergence(self, df: DataFrame) -> Series:
-        """
-        Detect bearish divergence between price and CVD.
-        """
         bearish_div = np.zeros(len(df), dtype=bool)
-        df["high_sma"] = df["high"].rolling(window=self.sma_window.value).mean()
-        df["cvd_sma"] = df["cvd"].rolling(window=self.sma_window.value).mean()
 
-        window = self.divergence_window.value
+        for i in range(lookback, len(df)):
+            price_window = df["close"].iloc[i - lookback : i]
+            cvd_window = df["cvd"].iloc[i - lookback : i]
 
-        for i in range(window, len(df)):
-            # Identify the most recent high in smoothed price
-            recent_price_high = df["high_sma"].iloc[i - window : i].max()
-            recent_price_high_idx = df["high_sma"].iloc[i - window : i].idxmax()
+            # Find local min/max
+            price_min_idx = price_window.idxmin()
+            price_max_idx = price_window.idxmax()
+            cvd_min_idx = cvd_window.idxmin()
+            cvd_max_idx = cvd_window.idxmax()
 
-            # Identify the most recent high in smoothed CVD
-            cvd_window = df["cvd_sma"].iloc[i - window : i]
-            if cvd_window.isna().all():
-                continue  # Skip if all values are NaN
+            # Calculate slopes
+            price_slope = (df["close"].iloc[i] - price_window.iloc[0]) / lookback
+            cvd_slope = (df["cvd"].iloc[i] - cvd_window.iloc[0]) / lookback
 
-            recent_cvd_high = cvd_window.max()
-            recent_cvd_high_idx = cvd_window.idxmax()
-
-            # Check for lower high in price and higher high in CVD
-            if (df["high_sma"].iloc[i] < recent_price_high) and (
-                df["cvd_sma"].iloc[i] > recent_cvd_high
+            # Detect bullish divergence
+            if (
+                price_min_idx == price_window.index[-1]
+                and cvd_min_idx != cvd_window.index[-1]
+                and price_slope < 0
+                and cvd_slope > 0
+                and df["price_roc"].iloc[i] < -threshold
+                and df["cvd_roc"].iloc[i] > threshold
             ):
-                if abs(recent_price_high_idx - recent_cvd_high_idx) <= window:
-                    if df["rsi"].iloc[i] > self.rsi_overbought.value:
-                        bearish_div[i] = True
+                bullish_div[i] = True
 
-        return Series(bearish_div, index=df.index)
+            # Detect bearish divergence
+            if (
+                price_max_idx == price_window.index[-1]
+                and cvd_max_idx != cvd_window.index[-1]
+                and price_slope > 0
+                and cvd_slope < 0
+                and df["price_roc"].iloc[i] > threshold
+                and df["cvd_roc"].iloc[i] < -threshold
+            ):
+                bearish_div[i] = True
+
+        return Series(bullish_div, index=df.index), Series(bearish_div, index=df.index)
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Update the pivot point calculations
 
-        bullish_div = self.detect_bullish_divergence(dataframe)
-        bearish_div = self.detect_bearish_divergence(dataframe)
+        bullish_div, bearish_div = self.detect_divergences(dataframe)
 
         dataframe.loc[
             (bullish_div)
             & (dataframe["close"] < dataframe["vwap"])
-            & (dataframe["low"] > dataframe["bear_poc_upper"]),
+            & (dataframe["low"] > dataframe["bear_poc_upper"])
+            & (dataframe["rsi"] < self.rsi_oversold.value),
             ["enter_long", "enter_tag"],
         ] = (1, "Long_Divergence")
 
         dataframe.loc[
             (bearish_div)
             & (dataframe["close"] > dataframe["vwap"])
-            & (dataframe["high"] < dataframe["bull_poc_lower"]),
+            & (dataframe["high"] < dataframe["bull_poc_lower"])
+            & (dataframe["rsi"] > self.rsi_overbought.value),
             ["enter_short", "enter_tag"],
         ] = (1, "Short_Divergence")
 

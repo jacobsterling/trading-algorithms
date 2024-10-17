@@ -28,8 +28,8 @@ _TRADING_MODE = {
 }
 
 ORDERFLOW = {
-    "cache_size": 1000,
-    "max_candles": 10000,
+    "cache_size": 3000,
+    "max_candles": 3000,
     "scale": 0.5,
     "stacked_imbalance_range": 3,  # needs at least this amount of imbalance next to each other
     "imbalance_volume": 1,  # filters out below

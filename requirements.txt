@@ -8,7 +8,7 @@ sklearn_time==0.0.1
 #freqtrade
 git+https://github.com/freqtrade/freqtrade.git#egg=freqtrade
 # Install hyperopts requirements
--r freqtrade/requirements-hyperopt.txt
+# -r freqtrade/requirements-hyperopt.txt
 
 # execution
 ccxt>=4.4.6
